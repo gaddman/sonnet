@@ -95,20 +95,27 @@ if ip:
     }
 
 
-def clean_exit(signal,frame):
+def clean_exit(signal, frame):
     # Probably pressed Ctrl-C, try to gracefully exit.
-    # try/except in case pressed twice quickly and midi already closed
-    try:
-        midiOut.close()
-        midi.quit()
-    except:
-        pass
-    sys.exit(0)
+    # Wait for already playing notes to complete
+    global stopping
+    stopping = True
+    for thread in list(activeNotes):
+        thread.join()
+    midiOut.close()
+    midi.quit()
 
 
 def play(instrument, volume):
     # play a note for a while
-    # Notes from http://computermusicresource.com/midikeys.html
+    global stopping
+    if not stopping:
+        thread = threading.Thread(target=playThread, args=(instrument, volume))
+        thread.start()
+        activeNotes.append(thread)
+
+
+def playThread(instrument, volume):
     if instrument in melodic:
         # melodic
         instrumentnum = melodic[instrument] - 1
@@ -127,9 +134,12 @@ def play(instrument, volume):
     midiOut.note_on(pitch, volume, channel)
     sleep(0.5)
     midiOut.note_off(pitch, volume, channel)
+    # this should be the first thread in the list, so remove that
+    activeNotes.pop(0)
 
 
 # Handle Ctrl-C press
+stopping = False
 signal.signal(signal.SIGINT, clean_exit)
 
 # Set up midi
@@ -139,7 +149,10 @@ if verbose:
     print("Outputting to {}".format(midi.get_device_info(port)))
 midiOut = midi.Output(port)
 
+activeNotes = []
 for line in sys.stdin:
+    if stopping:
+        continue
     if verbose:
         print(">> {}".format(line.strip()))
     if re.search(r"\S\s+\S", line):
@@ -163,7 +176,7 @@ for line in sys.stdin:
                 found = True
                 instrument, volume = protocolMap.get(protocol)
                 print("{}: {}".format(protocol, instrument))
-                threading.Thread(target=play, args=(instrument, volume)).start()
+                play(instrument, volume)
                 break
         if not found:
             print("{}: -".format(protocol))
@@ -187,7 +200,7 @@ for line in sys.stdin:
                 found = True
                 instrument, volume = ipMap.get(ip)
                 print("{}: {}".format(ip, instrument))
-                threading.Thread(target=play, args=(instrument, volume)).start()
+                play(instrument, volume)
                 break
         if not found:
             print("{}: -".format(ip))
