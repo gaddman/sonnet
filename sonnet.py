@@ -1,13 +1,7 @@
 #! python3.7
 # Using python3.7 on Windows because pygame.midi doesn't work on 3.8
 
-# Sonify a Wireshark capture
-#
-# Pipe Tshark in, eg start with:
-# Windows Command:
-#   "C:\Program Files\Wireshark\tshark.exe" -i Ethernet -q -l -T tabs -T fields -e frame.protocols -e ip.addr -e ipv6.addr | py .\sonnet.py
-# Windows PowerShell:
-#   Nope, run via cmd. See https://stackoverflow.com/questions/27440768/powershell-piping-causes-explosive-memory-usage/28058958#28058958
+# Sonify a network capture
 
 import argparse
 import ipaddress
@@ -15,6 +9,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import textwrap
 import threading
@@ -35,20 +30,20 @@ When providing dictionaries in Windows ensure there are no spaces and that quote
 )
 parser.add_argument("-v", help="Verbose", action="store_true")
 parser.add_argument(
-    "-p", help="Sonify based on default protocol mapping", action="store_true"
+    "-P", help="Sonify based on default protocol mapping", action="store_true"
 )
 parser.add_argument(
-    "-i", help="Sonify based on default IP address mapping", action="store_true"
+    "-I", help="Sonify based on default IP address mapping", action="store_true"
 )
 parser.add_argument(
-    "-P",
+    "--protocol",
     help="""Protocol to instrument mapping. This is a dictionary in the format
 {"protocol": ["instrument", volume]}
 """,
     type=json.loads,
 )
 parser.add_argument(
-    "-I",
+    "--ip",
     help="""IP address or network to instrument mapping. This is a dictionary in the format
 {"ip address": ["instrument", volume]}
 Prefix IP address with 'src' to match only source or 'dst' to match only destination.
@@ -56,13 +51,25 @@ Prefix IP address with 'src' to match only source or 'dst' to match only destina
     type=json.loads,
 )
 parser.add_argument("-l", help="List available instruments", action="store_true")
+parser.add_argument("-i", help="Interface to capture from", type=str, required=True)
+parser.add_argument(
+    "targs", help="Additional arguments to TShark. Precede arguments with --", nargs="*"
+)
+parser.add_argument(
+    "-t",
+    help="TShark location (defaults to %%PROGRAMFILES%% on Windows and on path in *nix)",
+    type=str,
+)
 args = parser.parse_args()
 verbose = args.v
-protocol = args.p
-ip = args.i
-protocolMap = args.P
-ipMap = args.I
+protocol = args.P
+ip = args.I
+protocolMap = args.protocol
+ipMap = args.ip
 listing = args.l
+interface = args.i
+targs = args.targs
+tshark = args.t
 
 if listing:
     print("Instrument listing")
@@ -71,6 +78,22 @@ if listing:
     print("Percussion:")
     print(list(percussion.keys()))
     sys.exit()
+
+if not tshark:
+    # determine path for tshark binary
+    if os.name == "nt":
+        # Windows, could be 32-bit or 64-bit TShark installed
+        t32 = os.path.expandvars("%PROGRAMFILES(X86)%\\Wireshark\\tshark.exe")
+        t64 = os.path.expandvars("%PROGRAMFILES%\\Wireshark\\tshark.exe")
+        if os.path.exists(t64):
+            tshark = t64
+        elif os.path.exists(t32):
+            tshark = t32
+        else:
+            sys.exit("Can't locate TShark executable")
+    else:
+        # Assume tshark is on the path
+        tshark = "tshark"
 
 # Default mappings if nothing specified
 # protocol to instrument
@@ -95,15 +118,16 @@ if ip:
     }
 
 
-def clean_exit(signal, frame):
+def cleanExit(signal=None, frame=None):
     # Probably pressed Ctrl-C, try to gracefully exit.
     # Wait for already playing notes to complete
     global stopping
-    stopping = True
-    for thread in list(activeNotes):
-        thread.join()
-    midiOut.close()
-    midi.quit()
+    if not stopping:
+        stopping = True
+        for thread in list(activeNotes):
+            thread.join()
+        midiOut.close()
+        midi.quit()
 
 
 def play(instrument, volume):
@@ -140,7 +164,32 @@ def playThread(instrument, volume):
 
 # Handle Ctrl-C press
 stopping = False
-signal.signal(signal.SIGINT, clean_exit)
+signal.signal(signal.SIGINT, cleanExit)
+
+# Start TShark
+cmd = [
+    tshark,
+    "-i",
+    interface,
+    "-l",
+    "-Q",
+    "-T",
+    "fields",
+    "-e",
+    "frame.protocols",
+    "-e",
+    "ip.addr",
+    "-e",
+    "ipv6.addr",
+]
+if targs:
+    cmd += targs
+if verbose:
+    print("Starting TShark with {}".format(cmd))
+try:
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+except FileNotFoundError:
+    sys.exit("Unable to locate TShark executable at {}".format(tshark))
 
 # Set up midi
 midi.init()
@@ -149,8 +198,9 @@ if verbose:
     print("Outputting to {}".format(midi.get_device_info(port)))
 midiOut = midi.Output(port)
 
+
 activeNotes = []
-for line in sys.stdin:
+for line in p.stdout:
     if stopping:
         continue
     if verbose:
@@ -165,6 +215,9 @@ for line in sys.stdin:
     protocols = protocolStr.split(":")
     if ipStr:
         ips = ipStr.split(",")
+        if len(ips) > 2:
+            # IP in IP, eg ICMP packet with original request
+            ips = ips[0:2]
     else:
         ips = None
 
@@ -204,3 +257,5 @@ for line in sys.stdin:
                 break
         if not found:
             print("{}: -".format(ip))
+
+cleanExit()
