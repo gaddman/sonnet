@@ -1,3 +1,58 @@
+import operator
+
+# Sample packet to instrument mappings suitable for a home network
+sampleMaps = {}
+# Protocol only
+sampleMaps["protocol"] = {
+    "mdns": ["tinkle bell", 60, 50],
+    "tls": ["blown bottle", 60, 50],
+    "arp": ["hi wood block", 60, 100],
+    "icmp": ["gunshot", 60, 127],
+    "dns": ["trumpet", 60, 80],
+}
+
+# IP address mapping, based on source/dest in RFC1918 space
+sampleMaps["ip"] = {
+    "ip.src == 10.0.0.0/8": ["flute", 60, 100],
+    "ip.src == 172.16.0.0/12": ["flute", 60, 100],
+    "ip.src == 192.168.0.0/16": ["flute", 60, 100],
+    "ip.dst == 10.0.0.0/8": ["xylophone", 60, 100],
+    "ip.dst == 172.16.0.0/12": ["xylophone", 60, 100],
+    "ip.dst == 192.168.0.0/16": ["xylophone", 60, 100],
+    "ipv6.src == fe80::/10": ["harmonica", 90, 100],
+    "ipv6.dst == fe80::/10": ["harmonica", 90, 100],
+}
+
+# testing code
+sampleMaps["test"] = {
+    "ip.src == 10.0.0.0/8": ["flute", 60, 80],
+    "ip.dst == 10.0.0.0/8": ["xylophone", 60, 80],
+    "ipv6.src == fe80::/10": ["harmonica", 90, 80],
+    "ipv6.dst == fe80::/10": ["harmonica", 90, 80],
+    "icmp": ["gunshot", 60, 100],
+    "tcp.len >= 100": ["open hi-hat", 90, 127],
+}
+
+# Map user provided operator to Python function
+ops = {
+    "==": operator.eq,
+    "!=": operator.ne,
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+}
+
+# TShark fields which contain IP addresses
+ipFields = [
+    "ip.addr",
+    "ip.src",
+    "ip.dst",
+    "ipv6.addr",
+    "ipv6.src",
+    "ipv6.dst",
+]
+
 # Instrument and Percussion map from
 # https://www.midi.org/specifications/item/gm-level-1-sound-set
 

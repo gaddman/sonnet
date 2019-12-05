@@ -22,39 +22,31 @@ from constants import *
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.RawTextHelpFormatter,
-    description="""Sonify a network capture. Pipe in stdout from TShark to convert different
-protocol messages into different sounds. Tshark should be invoked with the arguments
-'-q -l -T fields -e frame.protocols -e ip.addr -e ipv6.addr'.""",
-    epilog="""Volume is in the range 0-127.
+    description="""Sonify a network capture. Uses TShark to capture traffic and plays
+different sounds based on packet information such as IP address or protocol.""",
+    epilog="""
+Trigger     in the format  <Wireshark display field> <operator> <value>, eg "ip.addr == 8.8.8.8" or a protocol, eg "icmp"
+Instrument  string, use -l to list available instruments
+Pitch       integer from 21-108, see https://newt.phys.unsw.edu.au/jw/notes.html for mapping to note names
+Volume      integer from 0-127
+
 When providing dictionaries in Windows ensure there are no spaces and that quotes are escaped with a backslash.""",
 )
 parser.add_argument("-v", help="Verbose", action="store_true")
-parser.add_argument(
-    "-P", help="Sonify based on default protocol mapping", action="store_true"
+group = parser.add_mutually_exclusive_group(required=True)
+group.add_argument(
+    "-s", help="Sonify based on default mappings - either 'protocol' or 'ip'", type=str,
 )
-parser.add_argument(
-    "-I", help="Sonify based on default IP address mapping", action="store_true"
-)
-parser.add_argument(
-    "--protocol",
-    help="""Protocol to instrument mapping. This is a dictionary in the format
-{"protocol": ["instrument", volume]}
-""",
+group.add_argument(
+    "-m",
+    help="""Instrument mapping. This is a dictionary in the format
+{trigger: [instrument, pitch, volume]}""",
     type=json.loads,
 )
-parser.add_argument(
-    "--ip",
-    help="""IP address or network to instrument mapping. This is a dictionary in the format
-{"ip address": ["instrument", volume]}
-Prefix IP address with 'src' to match only source or 'dst' to match only destination.
-""",
-    type=json.loads,
-)
+group.add_argument("-f", help="""Load mapping from file, format as above""", type=str,)
 parser.add_argument("-l", help="List available instruments", action="store_true")
 parser.add_argument("-i", help="Interface to capture from", type=str, required=True)
-parser.add_argument(
-    "targs", help="Additional arguments to TShark. Precede arguments with --", nargs="*"
-)
+parser.add_argument("targs", help="Additional arguments to TShark. Precede arguments with --", nargs="*")
 parser.add_argument(
     "-t",
     help="TShark location (defaults to %%PROGRAMFILES%% on Windows and on path in *nix)",
@@ -62,10 +54,9 @@ parser.add_argument(
 )
 args = parser.parse_args()
 verbose = args.v
-protocol = args.P
-ip = args.I
-protocolMap = args.protocol
-ipMap = args.ip
+inputMap = args.m
+fileMap = args.f
+sampleMap = args.s
 listing = args.l
 interface = args.i
 targs = args.targs
@@ -96,26 +87,58 @@ if not tshark:
         tshark = "tshark"
 
 # Default mappings if nothing specified
-# protocol to instrument
-if protocol:
-    protocolMap = {
-        "mdns": ["tinkle bell", 50],
-        "tls": ["blown bottle", 50],
-        "arp": ["hi wood block", 100],
-        "icmp": ["gunshot", 127],
-        "dns": ["trumpet", 80],
-    }
+if sampleMap:
+    if sampleMap in sampleMaps:
+        inputMap = sampleMaps[sampleMap]
+    else:
+        sys.exit("Unknown mapping: {}".format(sampleMap))
 
-# ip address to instrument
-if ip:
-    ipMap = {
-        "src10.0.0.0/8": ["flute", 100],
-        "src172.16.0.0/12": ["flute", 100],
-        "src192.168.0.0/16": ["flute", 100],
-        "dst10.0.0.0/8": ["xylophone", 100],
-        "dst172.16.0.0/12": ["xylophone", 100],
-        "dst192.168.0.0/16": ["xylophone", 100],
-    }
+# Load mappings from file
+if fileMap:
+    if not os.path.exists(fileMap):
+        sys.exit("Can't locate file '{}'".format(fileMap))
+    with open(fileMap, 'r') as f:
+        try:
+            inputMap = json.loads(f.read())
+        except json.decoder.JSONDecodeError as err:
+            sys.exit("Can't read file: {}".format(err))
+
+def numeric(s):
+    # if string is a number then convert it
+    try:
+        return float(s)
+    except ValueError:
+        return s
+
+
+# Parse mapping to sanitize and determine fields to capture
+mapping = {}
+for match, note in inputMap.items():
+    if "." not in match:
+        # must(?) be a protocol name
+        if "frame.protocols" not in mapping:
+            mapping["frame.protocols"] = {}
+        mapping["frame.protocols"].update({match: note})
+    else:
+        fieldName, operator, value = re.search(
+            r"(^[^=!<> ]+)\s*([=!<>]+)\s*(.+)", match
+        ).groups()
+        if operator not in ops.keys():
+            sys.exit("Invalid operator '{}' in '{}'".format(operator, match))
+        if fieldName not in mapping:
+            mapping[fieldName] = {}
+        mapping[fieldName].update({tuple([operator, numeric(value)]): note})
+    instrument=note[0]
+    if instrument not in melodic and instrument not in percussion:
+        sys.exit("Error: {} not recognized".format(instrument))
+
+if verbose:
+    print("Mapping fields to instruments:")
+    for key, value in mapping.items():
+        print(" - {}:".format(key))
+        for key, value in value.items():
+            print("\t{}: {}".format(key, value))
+fieldList = sorted(mapping.keys())
 
 
 def cleanExit(signal=None, frame=None):
@@ -130,20 +153,19 @@ def cleanExit(signal=None, frame=None):
         midi.quit()
 
 
-def play(instrument, volume):
+def play(instrument,pitch, volume):
     # play a note for a while
     global stopping
     if not stopping:
-        thread = threading.Thread(target=playThread, args=(instrument, volume))
+        thread = threading.Thread(target=playThread, args=(instrument,pitch, volume))
         thread.start()
         activeNotes.append(thread)
 
 
-def playThread(instrument, volume):
+def playThread(instrument,pitch, volume):
     if instrument in melodic:
         # melodic
         instrumentnum = melodic[instrument] - 1
-        pitch = 72
         channel = 0
         midiOut.set_instrument(instrumentnum, channel)
     elif instrument in percussion:
@@ -151,9 +173,6 @@ def playThread(instrument, volume):
         instrumentnum = percussion[instrument]
         pitch = instrumentnum
         channel = 9
-    else:
-        print("Error: {} not recognized".format(instrument))
-        sys.exit()
 
     midiOut.note_on(pitch, volume, channel)
     sleep(0.5)
@@ -167,25 +186,13 @@ stopping = False
 signal.signal(signal.SIGINT, cleanExit)
 
 # Start TShark
-cmd = [
-    tshark,
-    "-i",
-    interface,
-    "-l",
-    "-Q",
-    "-T",
-    "fields",
-    "-e",
-    "frame.protocols",
-    "-e",
-    "ip.addr",
-    "-e",
-    "ipv6.addr",
-]
+cmd = [tshark, "-i", interface, "-l", "-Q", "-T", "fields"]
+for fieldName in fieldList:
+    cmd += ["-e", fieldName]
 if targs:
     cmd += targs
 if verbose:
-    print("Starting TShark with {}".format(cmd))
+    print("Starting TShark with '{}'".format(" ".join(cmd)))
 try:
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
 except FileNotFoundError:
@@ -203,59 +210,67 @@ activeNotes = []
 for line in p.stdout:
     if stopping:
         continue
+
+    # TShark output is tab delimited
+    capture = line.strip("\n").split("\t")
     if verbose:
-        print(">> {}".format(line.strip()))
-    if re.search(r"\S\s+\S", line):
-        # protocol + IP
-        protocolStr, ipStr = line.strip().split()
-    else:
-        # will only get protocols if this is eg ARP
-        protocolStr = line.strip()
-        ipStr = None
-    protocols = protocolStr.split(":")
-    if ipStr:
-        ips = ipStr.split(",")
-        if len(ips) > 2:
-            # IP in IP, eg ICMP packet with original request
-            ips = ips[0:2]
-    else:
-        ips = None
+        print(">> {}".format(capture))
 
-    # Check if protocol is known (get first matching protocol)
-    if protocolMap:
-        found = False
-        for protocol in protocols:
-            if protocol in protocolMap:
-                found = True
-                instrument, volume = protocolMap.get(protocol)
-                print("{}: {}".format(protocol, instrument))
-                play(instrument, volume)
-                break
-        if not found:
-            print("{}: -".format(protocol))
+    # Loop through each field of the output
+    for index, fieldName in enumerate(fieldList):
+        if capture[index] == "":
+            # TShark didn't find this field in the packet
+            continue
+        else:
+            captureField = capture[index]
+            matchFound = False
 
-    # Check if IP is known (get first matching IP)
-    if ipMap and ips:
-        found = False
-        src, dst = list(map(ipaddress.ip_address, ips))
-        for ip in ipMap.keys():
-            if (
-                (ip.startswith("src") and src in ipaddress.ip_network(ip[3:]))
-                or (ip.startswith("dst") and dst in ipaddress.ip_network(ip[3:]))
-                or (
-                    ip[0:3] not in ["src", "dst"]
-                    and (
-                        src in ipaddress.ip_network(ip)
-                        or dst in ipaddress.ip_network(ip)
+        # Loop through each defined match
+        for match, note in mapping[fieldName].items():
+            if fieldName == "frame.protocols":
+                # Special case, no operator/value combo
+                protocols = captureField.split(":")
+                for protocol, note in mapping[fieldName].items():
+                    if protocol in protocols:
+                        matchFound = True
+                        break
+            else:
+                operator, value = match
+                if fieldName in ipFields:
+                    # Special case, convert to IP
+                    if "," in captureField:
+                        # IP in IP, eg ICMP packet with original request
+                        captureField = captureField.split(",")[0]
+                    # Limited set of operators for IP comparison
+                    if (
+                        operator == "=="
+                        and ipaddress.ip_address(captureField)
+                        in ipaddress.ip_network(value)
+                    ) or (
+                        operator == "!="
+                        and ipaddress.ip_address(captureField)
+                        not in ipaddress.ip_network(value)
+                    ):
+                        matchFound = True
+                        break
+                else:
+                    # Anything except IP address or protocol is compared here
+                    op_func = ops[operator]
+                    if op_func(numeric(captureField), value):
+                        matchFound = True
+                        break
+        if matchFound:
+            instrument, pitch, volume = note
+            if verbose:
+                if isinstance(match, tuple):
+                    matchStr = "{} {} {}".format(fieldName, match[0], str(match[1]))
+                else:
+                    matchStr = protocol
+                print(
+                    "{}: '{}' pitch:{} volume:{}".format(
+                        matchStr, instrument, pitch, volume
                     )
                 )
-            ):
-                found = True
-                instrument, volume = ipMap.get(ip)
-                print("{}: {}".format(ip, instrument))
-                play(instrument, volume)
-                break
-        if not found:
-            print("{}: -".format(ip))
+            play(instrument, pitch,volume)
 
 cleanExit()
