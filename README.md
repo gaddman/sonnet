@@ -4,10 +4,19 @@ Sonnet will sonify a network capture - turning packets into sound - so that you 
 ## Requirements
 - Python3
 - [pygame](https://www.pygame.org/)
+- [TShark](https://www.wireshark.org/)
 
 ## Installation
+Install pygame to provide MIDI output. In Ubuntu:
+```
+sudo apt install python3-pygame
+```
+or with PIP:
 ```
 pip3 install pygame
+```
+And clone this repository:
+```
 git clone https://github.com/gaddman/sonnet.git
 ```
 
@@ -23,15 +32,22 @@ Fire a shot for an ICMP (ping) packet and play a trumpet for a TCP reset:
 ```
 py .\sonnet.py -i Ethernet -m '{"icmp":["gunshot",50,80],"tcp.flags.reset==1":["trumpet",90,120]}'
 ```
-The instrument mapping is a dictionary:
+The instrument mapping is a dictionary structured as:
+`{trigger: [instrument, pitch, volume]}`
 
-- **Trigger**:     in the format `<Wireshark display field>` `<operator>` `<value>`, eg "ip.addr == 8.8.8.8" or a protocol, eg "icmp"
-- **Instrument**:  string, use -l to list available [instruments](https://www.midi.org/specifications/item/gm-level-1-sound-set)
-- **Pitch**:       integer from 21-108, see https://newt.phys.unsw.edu.au/jw/notes.html for mapping to note names
-- **Volume**:      integer from 0-127
+- **trigger**:     may be one of:
+  - `<Wireshark protocol name>` eg "icmp"
+  - `<Wireshark display field>` `<operator>` `<value>` eg "ip.addr == 8.8.8.8" 
+- **instrument**:  string, use -l to list available [instruments](https://www.midi.org/specifications/item/gm-level-1-sound-set)
+- **pitch**:       integer from 21-108, see https://newt.phys.unsw.edu.au/jw/notes.html for mapping to note names
+- **volume**:      integer from 0-127
 
-
-In Windows the dictionary needs to have quotes escaped and spaces quoted, eg from CMD:
+### Windows quirks
+In Windows CMD the dictionary needs to have triple quotes around strings, eg:
 ```
-py .\sonnet.py -i Ethernet -v -m {\"icmp\":[\"gunshot\",50,80],\"tcp.flags.reset==1\":[\""open hi-hat"\",90,120]}
+py .\sonnet.py -i Ethernet -v -m {"""icmp""":["""gunshot""",50,80],"""tcp.flags.reset==1""":["""open hi-hat""",90,120]}
+```
+In Windows PowerShell it additionally needs to be single-quoted, eg:
+```
+py .\sonnet.py -i Ethernet -v -m '{"""icmp""":["""gunshot""",50,80],"""tcp.flags.reset==1""":["""open hi-hat""",90,120]}'
 ```
