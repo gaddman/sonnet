@@ -2,12 +2,16 @@
 # Using python3.7 on Windows because pygame.midi doesn't work on 3.8
 
 # Sonify a network capture
+# https://github.com/gaddman/sonnet
+# Christopher Gadd
+# 2019
 
 import argparse
 import ipaddress
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -30,7 +34,7 @@ Instrument  string, use -l to list available instruments
 Pitch       integer from 21-108, see https://newt.phys.unsw.edu.au/jw/notes.html for mapping to note names
 Volume      integer from 0-127
 
-When providing dictionaries in Windows ensure there are no spaces and that quotes are escaped with a backslash.""",
+When providing dictionaries in Windows use triple quotes around strings.""",
 )
 parser.add_argument("-v", help="Verbose", action="store_true")
 group = parser.add_mutually_exclusive_group(required=True)
@@ -43,8 +47,10 @@ group.add_argument(
 {trigger: [instrument, pitch, volume]}""",
     type=json.loads,
 )
-group.add_argument("-f", help="""Load mapping from file, format as above""", type=str,)
+group.add_argument("-f", help="Load mapping from file, format as above", type=str,)
 parser.add_argument("-l", help="List available instruments", action="store_true")
+parser.add_argument("-b", help="""Align the notes to a beat interval. A string in the format 'tempo "instrument" pitch volume'
+The tempo is an integer in beats per minute, and can be the only argument.""", type=str)
 parser.add_argument("-i", help="Interface to capture from", type=str, required=True)
 parser.add_argument("targs", help="Additional arguments to TShark. Precede arguments with --", nargs="*")
 parser.add_argument(
@@ -57,6 +63,7 @@ verbose = args.v
 inputMap = args.m
 fileMap = args.f
 sampleMap = args.s
+drum = args.b
 listing = args.l
 interface = args.i
 targs = args.targs
@@ -86,7 +93,30 @@ if not tshark:
         # Assume tshark is on the path
         tshark = "tshark"
 
-# Default mappings if nothing specified
+if drum:
+    if drum.isdigit():
+        # No instrument, beat frequency only
+        tempo = int(drum)
+        instrument=None
+        pitch=None
+        volume=None
+    else:
+        # Parse string for 'tempo "instrument" pitch volume'
+        try:
+            d=shlex.split(drum)
+            tempo=int(d[0])
+            instrument=d[1]
+            pitch=int(d[2])
+            volume=int(d[3])
+        except:
+            sys.exit("Can't parse drumbeat '{}'".format(drum))
+        if instrument not in melodic and instrument not in percussion:
+            sys.exit("Error: instrument '{}' not recognized".format(instrument))
+
+    beatFreq = 60/tempo # seconds between beats
+    beat=(beatFreq,instrument,pitch,volume)
+
+# Sample mappings
 if sampleMap:
     if sampleMap in sampleMaps:
         inputMap = sampleMaps[sampleMap]
@@ -110,7 +140,6 @@ def numeric(s):
     except ValueError:
         return s
 
-
 # Parse mapping to sanitize and determine fields to capture
 mapping = {}
 for match, note in inputMap.items():
@@ -130,7 +159,7 @@ for match, note in inputMap.items():
         mapping[fieldName].update({tuple([operator, numeric(value)]): note})
     instrument=note[0]
     if instrument not in melodic and instrument not in percussion:
-        sys.exit("Error: {} not recognized".format(instrument))
+        sys.exit("Error: instrument '{}' not recognized".format(instrument))
 
 if verbose:
     print("Mapping fields to instruments:")
@@ -148,19 +177,36 @@ def cleanExit(signal=None, frame=None):
     if not stopping:
         stopping = True
         for thread in list(activeNotes):
-            thread.join()
+            if thread.is_alive():
+                thread.join()
+        beatTimer.cancel()
         midiOut.close()
         midi.quit()
 
+class repeatTimer(threading.Timer):
+    def run(self):
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)
+
+def drumbeat():
+    # play drumbeat and all queued notes
+    if beat[1]:
+        # Play a drum each beat
+        thread = threading.Thread(target=playThread, args=(beat[1:4]))
+        activeNotes.append(thread)
+    for thread in activeNotes:
+        if not thread.is_alive():
+            thread.start()
 
 def play(instrument,pitch, volume):
     # play a note for a while
     global stopping
     if not stopping:
         thread = threading.Thread(target=playThread, args=(instrument,pitch, volume))
-        thread.start()
         activeNotes.append(thread)
-
+        if not drum:
+            # play immediately, else drumbeat function will play the note
+            thread.start()
 
 def playThread(instrument,pitch, volume):
     if instrument in melodic:
@@ -204,6 +250,10 @@ port = midi.get_default_output_id()
 if verbose:
     print("Outputting to {}".format(midi.get_device_info(port)))
 midiOut = midi.Output(port)
+
+if drum:
+    beatTimer = repeatTimer(beat[0],drumbeat)
+    beatTimer.start()
 
 
 activeNotes = []

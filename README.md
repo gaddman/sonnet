@@ -42,6 +42,16 @@ The instrument mapping is a dictionary structured as:
 - **pitch**:       integer from 21-108, see https://newt.phys.unsw.edu.au/jw/notes.html for mapping to note names
 - **volume**:      integer from 0-127
 
+### Tempo
+By default notes are played as soon as the packet is received. To align notes to a beat frequency use the `-b` flag, eg for 60 beats per minute:
+```
+py .\sonnet.py -i Ethernet -s protocol -b 60
+```
+To add a drumbeat:
+```
+py .\sonnet.py -i Ethernet -s protocol -b "60 'bass drum 1' 50 100"
+```
+
 ### Windows quirks
 In Windows CMD the dictionary needs to have triple quotes around strings, eg:
 ```
