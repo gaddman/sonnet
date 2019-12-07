@@ -21,7 +21,7 @@ git clone https://github.com/gaddman/sonnet.git
 ```
 
 ## Usage
-Sounds can be created based on any Wireshark field. You can provide your own mapping of fields to notes, or use one of the default provided mappings `protocol` or `ip`.
+Sounds can be created based on any Wireshark field. You can provide your own mapping of fields to notes, or use one of the default provided mappings `protocol`, `ip`, or `tcp`.
 
 ### Examples
 Sonify traffic on *Ethernet* interface based on default protocols:

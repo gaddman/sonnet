@@ -38,7 +38,7 @@ When providing dictionaries in Windows use triple quotes around strings.""",
 )
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument(
-    "-s", help="Sonify based on default mappings - either 'protocol' or 'ip'", type=str,
+    "-s", help="Sonify based on default mappings - either 'protocol', 'ip', or 'tcp'", type=str,
 )
 group.add_argument(
     "-m",
@@ -185,7 +185,7 @@ def cleanExit(signal=None, frame=None):
     global stopping
     if not stopping:
         stopping = True
-        if beat:
+        if drum:
             beatTimer.cancel()
         for thread in list(activeNotes):
             if thread.is_alive():

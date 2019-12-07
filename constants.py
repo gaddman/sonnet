@@ -17,14 +17,26 @@ sampleMaps["protocol"] = {
 
 # IP address mapping, based on source/dest in RFC1918 space
 sampleMaps["ip"] = {
-    "ip.src == 10.0.0.0/8": ["flute", 60, 100],
-    "ip.src == 172.16.0.0/12": ["flute", 60, 100],
-    "ip.src == 192.168.0.0/16": ["flute", 60, 100],
-    "ip.dst == 10.0.0.0/8": ["xylophone", 60, 100],
-    "ip.dst == 172.16.0.0/12": ["xylophone", 60, 100],
-    "ip.dst == 192.168.0.0/16": ["xylophone", 60, 100],
-    "ipv6.src == fe80::/10": ["harmonica", 90, 100],
-    "ipv6.dst == fe80::/10": ["harmonica", 90, 100],
+    "ip.src == 10.0.0.0/8": ["tubular bells", 60, 50],
+    "ip.src == 172.16.0.0/12": ["tubular bells", 60, 50],
+    "ip.src == 192.168.0.0/16": ["tubular bells", 60, 50],
+    "ip.dst == 10.0.0.0/8": ["electric bass (finger)", 60, 50],
+    "ip.dst == 172.16.0.0/12": ["electric bass (finger)", 60, 50],
+    "ip.dst == 192.168.0.0/16": ["electric bass (finger)", 60, 50],
+    "ipv6.src == fe80::/10": ["voice oohs", 48, 60],
+    "ipv6.dst == fe80::/10": ["voice oohs", 48, 60],
+}
+
+# TCP conversations
+sampleMaps["tcp"] = {
+    "tcp.flags.syn == 1": ["telephone ring", 60, 50],
+    "tcp.flags.fin == 1": ["taiko drum", 48, 40],
+    "tcp.flags.reset == 1": ["crash cymbal 1", 60, 50],
+    "tcp.analysis.duplicate_ack == 1": ["tubular bells", 72, 40],
+    "tcp.analysis.lost_segment == 1": ["tubular bells", 72, 40],
+    "tcp.analysis.out_of_order == 1": ["tubular bells", 72, 40],
+    "tcp.analysis.retransmission == 1": ["tubular bells", 72, 40],
+    "tcp.analysis.spurious_retransmission == 1": ["tubular bells", 72, 40],
 }
 
 # testing code
