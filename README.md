@@ -49,8 +49,9 @@ py .\sonnet.py -i Ethernet -s protocol -b 60
 ```
 To add a drumbeat:
 ```
-py .\sonnet.py -i Ethernet -s protocol -b "60 'bass drum 1' 50 100"
+py .\sonnet.py -i Ethernet -s protocol -b "60 'bass drum 1' 50 40"
 ```
+If, during the beat interval, two or more identical notes are triggered then a single note will be played at a higher volume, increasing by the volume by 2 for each matching note.
 
 ### Windows quirks
 In Windows CMD the dictionary needs to have triple quotes around strings, eg:

@@ -4,11 +4,15 @@ import operator
 sampleMaps = {}
 # Protocol only
 sampleMaps["protocol"] = {
-    "mdns": ["tinkle bell", 60, 50],
-    "tls": ["blown bottle", 60, 50],
-    "arp": ["hi wood block", 60, 100],
-    "icmp": ["gunshot", 60, 127],
-    "dns": ["trumpet", 60, 80],
+    "arp": ["tinkle bell", 60, 80],
+    "dns": ["bird tweet", 60, 50],
+    "icmp": ["open hi-hat", 60, 30],
+    "icmpv6": ["hi wood block", 60, 30],
+    "igmp": ["vibraphone", 60, 50],
+    "mdns": ["open triangle", 60, 50],
+    "smb": ["steel drums", 60, 50],
+    "ssdp": ["acoustic bass", 60, 50],
+    "tls": ["ocarina", 60, 10],
 }
 
 # IP address mapping, based on source/dest in RFC1918 space

@@ -36,7 +36,6 @@ Volume      integer from 0-127
 
 When providing dictionaries in Windows use triple quotes around strings.""",
 )
-parser.add_argument("-v", help="Verbose", action="store_true")
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument(
     "-s", help="Sonify based on default mappings - either 'protocol' or 'ip'", type=str,
@@ -47,17 +46,27 @@ group.add_argument(
 {trigger: [instrument, pitch, volume]}""",
     type=json.loads,
 )
-group.add_argument("-f", help="Load mapping from file, format as above", type=str,)
+group.add_argument(
+    "-f", help="Load mapping from file, format as above", type=str,
+)
 parser.add_argument("-l", help="List available instruments", action="store_true")
-parser.add_argument("-b", help="""Align the notes to a beat interval. A string in the format 'tempo "instrument" pitch volume'
-The tempo is an integer in beats per minute, and can be the only argument.""", type=str)
+parser.add_argument(
+    "-b",
+    help="""Align the notes to a beat interval. A string in the format 'tempo "instrument" pitch volume'
+or just tempo if no instrument is to be played. The tempo is an integer in beats per minute.""",
+    type=str,
+)
 parser.add_argument("-i", help="Interface to capture from", type=str, required=True)
-parser.add_argument("targs", help="Additional arguments to TShark. Precede arguments with --", nargs="*")
+parser.add_argument(
+    "targs", help="Additional arguments to TShark. Precede arguments with --", nargs="*"
+)
 parser.add_argument(
     "-t",
     help="TShark location (defaults to %%PROGRAMFILES%% on Windows and on path in *nix)",
     type=str,
 )
+parser.add_argument("-v", help="Verbose, use twice for more verbosity", action="count", default=0)
+
 args = parser.parse_args()
 verbose = args.v
 inputMap = args.m
@@ -97,24 +106,24 @@ if drum:
     if drum.isdigit():
         # No instrument, beat frequency only
         tempo = int(drum)
-        instrument=None
-        pitch=None
-        volume=None
+        instrument = None
+        pitch = None
+        volume = None
     else:
         # Parse string for 'tempo "instrument" pitch volume'
         try:
-            d=shlex.split(drum)
-            tempo=int(d[0])
-            instrument=d[1]
-            pitch=int(d[2])
-            volume=int(d[3])
+            d = shlex.split(drum)
+            tempo = int(d[0])
+            instrument = d[1]
+            pitch = int(d[2])
+            volume = int(d[3])
         except:
             sys.exit("Can't parse drumbeat '{}'".format(drum))
         if instrument not in melodic and instrument not in percussion:
             sys.exit("Error: instrument '{}' not recognized".format(instrument))
 
-    beatFreq = 60/tempo # seconds between beats
-    beat=(beatFreq,instrument,pitch,volume)
+    beatFreq = 60 / tempo  # seconds between beats
+    beat = (beatFreq, instrument, pitch, volume)
 
 # Sample mappings
 if sampleMap:
@@ -127,11 +136,12 @@ if sampleMap:
 if fileMap:
     if not os.path.exists(fileMap):
         sys.exit("Can't locate file '{}'".format(fileMap))
-    with open(fileMap, 'r') as f:
+    with open(fileMap, "r") as f:
         try:
             inputMap = json.loads(f.read())
         except json.decoder.JSONDecodeError as err:
             sys.exit("Can't read file: {}".format(err))
+
 
 def numeric(s):
     # if string is a number then convert it
@@ -139,6 +149,7 @@ def numeric(s):
         return float(s)
     except ValueError:
         return s
+
 
 # Parse mapping to sanitize and determine fields to capture
 mapping = {}
@@ -149,15 +160,13 @@ for match, note in inputMap.items():
             mapping["frame.protocols"] = {}
         mapping["frame.protocols"].update({match: note})
     else:
-        fieldName, operator, value = re.search(
-            r"(^[^=!<> ]+)\s*([=!<>]+)\s*(.+)", match
-        ).groups()
+        fieldName, operator, value = re.search(r"(^[^=!<> ]+)\s*([=!<>]+)\s*(.+)", match).groups()
         if operator not in ops.keys():
             sys.exit("Invalid operator '{}' in '{}'".format(operator, match))
         if fieldName not in mapping:
             mapping[fieldName] = {}
         mapping[fieldName].update({tuple([operator, numeric(value)]): note})
-    instrument=note[0]
+    instrument = note[0]
     if instrument not in melodic and instrument not in percussion:
         sys.exit("Error: instrument '{}' not recognized".format(instrument))
 
@@ -176,39 +185,66 @@ def cleanExit(signal=None, frame=None):
     global stopping
     if not stopping:
         stopping = True
+        if beat:
+            beatTimer.cancel()
         for thread in list(activeNotes):
             if thread.is_alive():
                 thread.join()
-        beatTimer.cancel()
         midiOut.close()
         midi.quit()
+
 
 class repeatTimer(threading.Timer):
     def run(self):
         while not self.finished.wait(self.interval):
             self.function(*self.args, **self.kwargs)
 
+
 def drumbeat():
     # play drumbeat and all queued notes
     if beat[1]:
-        # Play a drum each beat
+        # Play an instrument each beat
         thread = threading.Thread(target=playThread, args=(beat[1:4]))
+        thread.name = "{}.{}.{}".format(*beat[1:4])
         activeNotes.append(thread)
-    for thread in activeNotes:
+    # Play queued notes. Increase volume for each note in the queue
+    queue = {}
+    for thread in list(activeNotes):
         if not thread.is_alive():
-            thread.start()
+            name = thread.name
+            instrument, pitch, volume = thread._args
+            if name not in queue:
+                queue[name] = [instrument, pitch, volume, thread]
+            else:
+                # max volume is 127, increase by 2 for each note in this interval
+                queue[name][2] = min(127, queue[name][2] + 2)
+                activeNotes.remove(thread)
+    if verbose:
+        print("Beat:")
+    for name, values in queue.items():
+        instrument, pitch, volume, thread = values
+        thread._args = (instrument, pitch, volume)
+        if verbose:
+            print("  {} with volume {}".format(name, volume))
+        thread.start()
 
-def play(instrument,pitch, volume):
+
+def play(instrument, pitch, volume):
     # play a note for a while
     global stopping
     if not stopping:
-        thread = threading.Thread(target=playThread, args=(instrument,pitch, volume))
+        thread = threading.Thread(target=playThread, args=(instrument, pitch, volume))
         activeNotes.append(thread)
-        if not drum:
-            # play immediately, else drumbeat function will play the note
+        if drum:
+            # Drumbeat function will play the note later.
+            # Name the thread so that it can identify matching notes.
+            thread.name = "{}.{}.{}".format(instrument, pitch, volume)
+        else:
+            # play immediately
             thread.start()
 
-def playThread(instrument,pitch, volume):
+
+def playThread(instrument, pitch, volume):
     if instrument in melodic:
         # melodic
         instrumentnum = melodic[instrument] - 1
@@ -252,7 +288,7 @@ if verbose:
 midiOut = midi.Output(port)
 
 if drum:
-    beatTimer = repeatTimer(beat[0],drumbeat)
+    beatTimer = repeatTimer(beat[0], drumbeat)
     beatTimer.start()
 
 
@@ -263,7 +299,7 @@ for line in p.stdout:
 
     # TShark output is tab delimited
     capture = line.strip("\n").split("\t")
-    if verbose:
+    if verbose >= 2:
         print(">> {}".format(capture))
 
     # Loop through each field of the output
@@ -294,12 +330,10 @@ for line in p.stdout:
                     # Limited set of operators for IP comparison
                     if (
                         operator == "=="
-                        and ipaddress.ip_address(captureField)
-                        in ipaddress.ip_network(value)
+                        and ipaddress.ip_address(captureField) in ipaddress.ip_network(value)
                     ) or (
                         operator == "!="
-                        and ipaddress.ip_address(captureField)
-                        not in ipaddress.ip_network(value)
+                        and ipaddress.ip_address(captureField) not in ipaddress.ip_network(value)
                     ):
                         matchFound = True
                         break
@@ -316,11 +350,7 @@ for line in p.stdout:
                     matchStr = "{} {} {}".format(fieldName, match[0], str(match[1]))
                 else:
                     matchStr = protocol
-                print(
-                    "{}: '{}' pitch:{} volume:{}".format(
-                        matchStr, instrument, pitch, volume
-                    )
-                )
-            play(instrument, pitch,volume)
+                print("{}: '{}' pitch:{} volume:{}".format(matchStr, instrument, pitch, volume))
+            play(instrument, pitch, volume)
 
 cleanExit()
