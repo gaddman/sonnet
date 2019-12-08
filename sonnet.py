@@ -7,6 +7,7 @@
 # 2019
 
 import argparse
+import collections
 import ipaddress
 import json
 import os
@@ -17,12 +18,14 @@ import subprocess
 import sys
 import textwrap
 import threading
-from time import sleep
+import time
 
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 import pygame.midi as midi
 
 from constants import *
+
+Note = collections.namedtuple("Note", ["instrument", "pitch", "volume"])
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.RawTextHelpFormatter,
@@ -106,24 +109,20 @@ if drum:
     if drum.isdigit():
         # No instrument, beat frequency only
         tempo = int(drum)
-        instrument = None
-        pitch = None
-        volume = None
+        note = None
     else:
         # Parse string for 'tempo "instrument" pitch volume'
         try:
             d = shlex.split(drum)
             tempo = int(d[0])
-            instrument = d[1]
-            pitch = int(d[2])
-            volume = int(d[3])
+            note = Note(d[1], int(d[2]), int(d[3]))
         except:
             sys.exit("Can't parse drumbeat '{}'".format(drum))
-        if instrument not in melodic and instrument not in percussion:
-            sys.exit("Error: instrument '{}' not recognized".format(instrument))
+        if note.instrument not in melodic and note.instrument not in percussion:
+            sys.exit("Error: instrument '{}' not recognized".format(note.instrument))
 
     beatFreq = 60 / tempo  # seconds between beats
-    beat = (beatFreq, instrument, pitch, volume)
+    beat = (beatFreq, note)
 
 # Sample mappings
 if sampleMap:
@@ -153,7 +152,8 @@ def numeric(s):
 
 # Parse mapping to sanitize and determine fields to capture
 mapping = {}
-for match, note in inputMap.items():
+for match, noteList in inputMap.items():
+    note = Note(*noteList)
     if "." not in match:
         # must(?) be a protocol name
         if "frame.protocols" not in mapping:
@@ -166,16 +166,15 @@ for match, note in inputMap.items():
         if fieldName not in mapping:
             mapping[fieldName] = {}
         mapping[fieldName].update({tuple([operator, numeric(value)]): note})
-    instrument = note[0]
-    if instrument not in melodic and instrument not in percussion:
-        sys.exit("Error: instrument '{}' not recognized".format(instrument))
+    if note.instrument not in melodic and note.instrument not in percussion:
+        sys.exit("Error: instrument '{}' not recognized".format(note.instrument))
 
 if verbose:
     print("Mapping fields to instruments:")
-    for key, value in mapping.items():
-        print(" - {}:".format(key))
-        for key, value in value.items():
-            print("\t{}: {}".format(key, value))
+    for field, matches in mapping.items():
+        print(" - {}:".format(field))
+        for match, note in matches.items():
+            print("\t{}: {}".format(match, list(note)))
 fieldList = sorted(mapping.keys())
 
 
@@ -202,63 +201,62 @@ class repeatTimer(threading.Timer):
 
 def drumbeat():
     # play drumbeat and all queued notes
+    global queuedNotes
     if beat[1]:
         # Play an instrument each beat
-        thread = threading.Thread(target=playThread, args=(beat[1:4]))
-        thread.name = "{}.{}.{}".format(*beat[1:4])
-        activeNotes.append(thread)
+        queuedNotes.append(beat[1])
     # Play queued notes. Increase volume for each note in the queue
+    # queue is a dictionary of key=note(a named tuple): value=volume
     queue = {}
-    for thread in list(activeNotes):
-        if not thread.is_alive():
-            name = thread.name
-            instrument, pitch, volume = thread._args
-            if name not in queue:
-                queue[name] = [instrument, pitch, volume, thread]
-            else:
-                # max volume is 127, increase by 2 for each note in this interval
-                queue[name][2] = min(127, queue[name][2] + 2)
-                activeNotes.remove(thread)
+    for note in queuedNotes:
+        if note not in queue:
+            queue[note] = note.volume
+        else:
+            # max volume is 127, increase by 2 for each note in this interval
+            queue[note] = min(127, queue[note] + 2)
+    queuedNotes = []
     if verbose:
         print("Beat:")
-    for name, values in queue.items():
-        instrument, pitch, volume, thread = values
-        thread._args = (instrument, pitch, volume)
+    for note, volume in queue.items():
+        newNote = Note(note.instrument, note.pitch, volume)
+        thread = threading.Thread(target=playThread, args=(newNote,))
+        activeNotes.append(thread)
         if verbose:
-            print("  {} with volume {}".format(name, volume))
+            print("  {} with volume {}".format(list(newNote), volume))
         thread.start()
 
 
-def play(instrument, pitch, volume):
+def play(note):
     # play a note for a while
     global stopping
+    global queuedNotes
     if not stopping:
-        thread = threading.Thread(target=playThread, args=(instrument, pitch, volume))
-        activeNotes.append(thread)
         if drum:
             # Drumbeat function will play the note later.
-            # Name the thread so that it can identify matching notes.
-            thread.name = "{}.{}.{}".format(instrument, pitch, volume)
+            queuedNotes.append(note)
         else:
             # play immediately
+            thread = threading.Thread(target=playThread, args=(note,))
+            activeNotes.append(thread)
             thread.start()
 
 
-def playThread(instrument, pitch, volume):
-    if instrument in melodic:
+def playThread(note):
+    if note.instrument in melodic:
         # melodic
-        instrumentnum = melodic[instrument] - 1
+        instrumentnum = melodic[note.instrument] - 1
+        pitch = note.pitch
         channel = 0
         midiOut.set_instrument(instrumentnum, channel)
-    elif instrument in percussion:
+    elif note.instrument in percussion:
         # percussion
-        instrumentnum = percussion[instrument]
+        instrumentnum = percussion[note.instrument]
         pitch = instrumentnum
         channel = 9
 
-    midiOut.note_on(pitch, volume, channel)
-    sleep(0.5)
-    midiOut.note_off(pitch, volume, channel)
+    midiOut.note_on(pitch, note.volume, channel)
+    time.sleep(0.5)
+    midiOut.note_off(pitch, note.volume, channel)
     # this should be the first thread in the list, so remove that
     activeNotes.pop(0)
 
@@ -292,7 +290,8 @@ if drum:
     beatTimer.start()
 
 
-activeNotes = []
+activeNotes = []  # threads currently playing
+queuedNotes = []  # notes to play
 for line in p.stdout:
     if stopping:
         continue
@@ -344,13 +343,12 @@ for line in p.stdout:
                         matchFound = True
                         break
         if matchFound:
-            instrument, pitch, volume = note
             if verbose:
                 if isinstance(match, tuple):
                     matchStr = "{} {} {}".format(fieldName, match[0], str(match[1]))
                 else:
                     matchStr = protocol
-                print("{}: '{}' pitch:{} volume:{}".format(matchStr, instrument, pitch, volume))
-            play(instrument, pitch, volume)
+                print("{}: '{}' pitch:{} volume:{}".format(matchStr, *note))
+            play(note)
 
 cleanExit()
