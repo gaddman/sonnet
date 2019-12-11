@@ -69,7 +69,7 @@ Sonify based on TCP conversations, add a drumbeat, and print each matching note:
 ```
 py .\sonnet.py -i Ethernet -s tcp -b "60 'bass drum 1' 36 40" -v
 ```
-[Listen and watch here](example-tcp.mp4)
+[Listen and watch here](example-tcp.mp4?raw=1)
 
 ### Windows quirks
 In Windows CMD the dictionary needs to have triple quotes around strings, eg:
