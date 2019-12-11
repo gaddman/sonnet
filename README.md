@@ -26,7 +26,7 @@ Sounds can be created based on any Wireshark field. You can provide your own map
 ### Instrument mapping
 Notes are chosen baesd on a dictionary structured as:
 
-```json
+```
 {trigger: [instrument, pitch, volume]}
 ```
 where:
